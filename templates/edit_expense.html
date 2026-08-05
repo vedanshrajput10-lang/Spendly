@@ -12,7 +12,8 @@
       {% endfor %}
     {% endwith %}
 
-    <form method="post">
+    <form action="{{ url_for('register') }}" method="POST">
+
       <div class="field">
         <label>Section</label>
         <select name="category_id" required style="width:100%; padding:10px 12px; border:1px solid var(--paper-line); border-radius:3px;">
