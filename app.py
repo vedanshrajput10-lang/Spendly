@@ -5,6 +5,16 @@ from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, g
 from werkzeug.security import generate_password_hash, check_password_hash
+import sqlite3
+
+def init_db():
+    db = sqlite3.connect("expenses.db")
+    with open("schema.sql") as f:
+        db.executescript(f.read())
+    db.close()
+
+# Run this once when starting the app
+init_db()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "expenses.db")
