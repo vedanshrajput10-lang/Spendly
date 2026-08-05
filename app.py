@@ -9,7 +9,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SCHEMA_PATH = os.path.join(BASE_DIR, "schema.sql")
 def init_db():
     db = sqlite3.connect("expenses.db")
-    with open("schema.sql") as f:
+    with open(SCHEMA_PATH) as f:
         db.executescript(f.read())
     db.close()
 
