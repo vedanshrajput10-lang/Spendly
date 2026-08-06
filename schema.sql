@@ -1,7 +1,10 @@
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS expenses;
+
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL
+    password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 
@@ -13,4 +16,3 @@ CREATE TABLE IF NOT EXISTS expenses (
     date TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
- 
