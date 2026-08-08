@@ -18,14 +18,10 @@ DEFAULT_CATEGORIES = [
     ("Other", "#6B6355"),
 ]
 
-# Replit's built-in database (and Render's Postgres add-on) both provide this
-# environment variable automatically once the database is attached to the app.
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 
-# ---------------------------------------------------------------------------
-# Database helpers
-# ---------------------------------------------------------------------------
+#Database help ke liye
 
 class Db:
     """Thin wrapper so the rest of the app can keep using the same
@@ -70,8 +66,6 @@ def close_db(exception=None):
 
 def init_db():
     if not DATABASE_URL:
-        # No database attached yet - skip silently so the app can still start
-        # and show a clear error on first use instead of crashing at boot.
         return
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
@@ -118,15 +112,11 @@ def init_db():
     conn.close()
 
 
-# Always initialize on startup, regardless of how the app is launched
-# (python app.py locally, or gunicorn in production) - this was the root
-# cause of the "no such table" crashes seen on both Replit and Render.
+
 init_db()
 
 
-# ---------------------------------------------------------------------------
-# Auth helpers
-# ---------------------------------------------------------------------------
+
 
 def login_required(view):
     @wraps(view)
@@ -141,10 +131,6 @@ def login_required(view):
 def inject_user():
     return {"current_username": session.get("username")}
 
-
-# ---------------------------------------------------------------------------
-# Auth routes
-# ---------------------------------------------------------------------------
 
 @app.route("/")
 def index():
@@ -219,9 +205,7 @@ def logout():
     return redirect(url_for("login"))
 
 
-# ---------------------------------------------------------------------------
-# Dashboard / expenses
-# ---------------------------------------------------------------------------
+
 
 @app.route("/dashboard")
 @login_required
@@ -237,9 +221,7 @@ def dashboard():
         "SELECT * FROM categories WHERE user_id = ? ORDER BY name", (user_id,)
     ).fetchall()
 
-    # A search searches across ALL months (not just the selected one), since
-    # the point is finding something regardless of when it happened. Each
-    # result still shows its own date so context isn't lost.
+    
     if search_query:
         query = """
             SELECT expenses.*, categories.name AS category_name, categories.color AS category_color
@@ -379,9 +361,7 @@ def edit_expense(expense_id):
     return render_template("edit_expense.html", expense=expense, categories=categories)
 
 
-# ---------------------------------------------------------------------------
-# Categories (sections)
-# ---------------------------------------------------------------------------
+#Categories section
 
 @app.route("/categories/add", methods=["POST"])
 @login_required
@@ -426,9 +406,8 @@ def delete_category(category_id):
     return redirect(url_for("dashboard"))
 
 
-# ---------------------------------------------------------------------------
-# CSV export
-# ---------------------------------------------------------------------------
+# CSV export(Excel)
+
 
 @app.route("/expenses/export")
 @login_required
@@ -488,18 +467,14 @@ def export_expenses():
     )
 
 
-# ---------------------------------------------------------------------------
-# About
-# ---------------------------------------------------------------------------
+#About Spendly
 
 @app.route("/about")
 def about():
     return render_template("about.html")
 
 
-# ---------------------------------------------------------------------------
-# Feedback
-# ---------------------------------------------------------------------------
+#Feedback form improve karne ke liye
 
 @app.route("/feedback", methods=["GET", "POST"])
 def feedback():
