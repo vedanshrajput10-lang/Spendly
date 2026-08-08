@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}About · Spendly{% endblock %}
+{% block body %}
+<div class="wrap">
+  <div class="topbar">
+    <p class="brand"><a href="{{ url_for('dashboard') }}">Spendly</a></p>
+    <div class="topbar-right">
+      <a class="btn btn-outline" href="{{ url_for('dashboard') }}">← Back</a>
+    </div>
+  </div>
+
+  <div class="card" style="max-width: 620px; margin: 0 auto;">
+    <h3>About Spendly</h3>
+    <p style="line-height: 1.6; margin-bottom: 14px;">
+      Spendly is a simple, no-frills way to track daily expenses — organized
+      into whatever sections make sense for you, not a fixed list someone
+      else decided on. Add an expense, tag it with a section, and see where
+      your money actually goes each month.
+    </p>
+
+    <h3 style="margin-top: 24px;">Features</h3>
+    <ul style="line-height: 1.9; padding-left: 20px;">
+      <li>Custom sections with your own colors</li>
+      <li>Monthly view with a spending breakdown</li>
+      <li>Search across all your past expenses</li>
+      <li>Export your data as a CSV file anytime</li>
+      <li>Installable on your phone's home screen</li>
+    </ul>
+
+    <h3 style="margin-top: 24px;">Made by</h3>
+    <p style="line-height: 1.6;">
+      Built by <strong>Vedansh Rajput</strong>.
+    </p>
+
+    <h3 style="margin-top: 24px;">Feedback</h3>
+    <p style="line-height: 1.6;">
+      Found a bug, or have an idea for something Spendly should do?
+      <a href="{{ url_for('feedback') }}">Send feedback</a> — it goes straight through.
+    </p>
+  </div>
+</div>
+{% endblock %}
