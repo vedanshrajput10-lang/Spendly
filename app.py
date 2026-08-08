@@ -8,18 +8,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-
-_secret = os.environ.get("SESSION_SECRET")
-if not _secret:
-    raise RuntimeError(
-        "SESSION_SECRET environment variable is not set. "
-        "Add it as a Replit secret before starting the app."
-    )
-app.secret_key = _secret
-
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable is not set.")
+app.secret_key = os.environ.get("SESSION_SECRET", "change-this-secret-key-before-real-use")
 
 DEFAULT_CATEGORIES = [
     ("Food", "#B5533C"),
@@ -29,14 +18,46 @@ DEFAULT_CATEGORIES = [
     ("Other", "#6B6355"),
 ]
 
+# Replit's built-in database (and Render's Postgres add-on) both provide this
+# environment variable automatically once the database is attached to the app.
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
 
 # ---------------------------------------------------------------------------
 # Database helpers
 # ---------------------------------------------------------------------------
 
+class Db:
+    """Thin wrapper so the rest of the app can keep using the same
+    db.execute(...).fetchone() / .fetchall() style as before, while actually
+    talking to PostgreSQL under the hood (dict-like rows, ? -> %s, etc.)."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def execute(self, query, params=()):
+        query = query.replace("?", "%s")
+        cur = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(query, params)
+        return cur
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+
 def get_db():
     if "db" not in g:
-        g.db = psycopg2.connect(DATABASE_URL)
+        if not DATABASE_URL:
+            raise RuntimeError(
+                "DATABASE_URL is not set. Attach a PostgreSQL database to this "
+                "app (Replit: sidebar -> Database. Render: add a PostgreSQL "
+                "instance and link its connection string as DATABASE_URL)."
+            )
+        conn = psycopg2.connect(DATABASE_URL)
+        g.db = Db(conn)
     return g.db
 
 
@@ -47,39 +68,19 @@ def close_db(exception=None):
         db.close()
 
 
-def query(sql, params=(), one=False, commit=False):
-    """Run a SQL statement and return results as dicts."""
-    db = get_db()
-    with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql, params)
-        if commit:
-            db.commit()
-            return cur.lastrowid if cur.description else None
-        if one:
-            return cur.fetchone()
-        return cur.fetchall()
-
-
-def execute(sql, params=(), returning=False):
-    """Run a mutating statement; returns the first column of the first row if RETURNING."""
-    db = get_db()
-    with db.cursor() as cur:
-        cur.execute(sql, params)
-        db.commit()
-        if returning:
-            row = cur.fetchone()
-            return row[0] if row else None
-
-
 def init_db():
-    db = psycopg2.connect(DATABASE_URL)
-    cur = db.cursor()
+    if not DATABASE_URL:
+        # No database attached yet - skip silently so the app can still start
+        # and show a clear error on first use instead of crashing at boot.
+        return
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            created_at TIMESTAMP NOT NULL
+            created_at TEXT NOT NULL
         )
     """)
     cur.execute("""
@@ -88,7 +89,7 @@ def init_db():
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             color TEXT NOT NULL DEFAULT '#22304A',
-            created_at TIMESTAMP NOT NULL,
+            created_at TEXT NOT NULL,
             UNIQUE(user_id, name)
         )
     """)
@@ -100,12 +101,27 @@ def init_db():
             amount REAL NOT NULL,
             note TEXT,
             spent_on DATE NOT NULL,
-            created_at TIMESTAMP NOT NULL
+            created_at TEXT NOT NULL
         )
     """)
-    db.commit()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS feedback (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            username TEXT,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.commit()
     cur.close()
-    db.close()
+    conn.close()
+
+
+# Always initialize on startup, regardless of how the app is launched
+# (python app.py locally, or gunicorn in production) - this was the root
+# cause of the "no such table" crashes seen on both Replit and Render.
+init_db()
 
 
 # ---------------------------------------------------------------------------
@@ -151,23 +167,25 @@ def register():
             flash("Passwords do not match.", "error")
             return render_template("register.html")
 
-        existing = query("SELECT id FROM users WHERE username = %s", (username,), one=True)
+        db = get_db()
+        existing = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
         if existing:
             flash("That username is already taken.", "error")
             return render_template("register.html")
 
         password_hash = generate_password_hash(password)
-        user_id = execute(
-            "INSERT INTO users (username, password_hash, created_at) VALUES (%s, %s, %s) RETURNING id",
-            (username, password_hash, datetime.utcnow()),
-            returning=True,
-        )
+        row = db.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?) RETURNING id",
+            (username, password_hash, datetime.utcnow().isoformat()),
+        ).fetchone()
+        user_id = row["id"]
 
         for name, color in DEFAULT_CATEGORIES:
-            execute(
-                "INSERT INTO categories (user_id, name, color, created_at) VALUES (%s, %s, %s, %s)",
-                (user_id, name, color, datetime.utcnow()),
+            db.execute(
+                "INSERT INTO categories (user_id, name, color, created_at) VALUES (?, ?, ?, ?)",
+                (user_id, name, color, datetime.utcnow().isoformat()),
             )
+        db.commit()
 
         flash("Account created. You can log in now.", "success")
         return redirect(url_for("login"))
@@ -181,7 +199,8 @@ def login():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
-        user = query("SELECT * FROM users WHERE username = %s", (username,), one=True)
+        db = get_db()
+        user = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         if user is None or not check_password_hash(user["password_hash"], password):
             flash("Incorrect username or password.", "error")
             return render_template("login.html")
@@ -207,39 +226,57 @@ def logout():
 @app.route("/dashboard")
 @login_required
 def dashboard():
+    db = get_db()
     user_id = session["user_id"]
 
     category_filter = request.args.get("category", type=int)
     month = request.args.get("month", date.today().strftime("%Y-%m"))
+    search_query = request.args.get("q", "").strip()
 
-    categories = query(
-        "SELECT * FROM categories WHERE user_id = %s ORDER BY name", (user_id,)
-    )
+    categories = db.execute(
+        "SELECT * FROM categories WHERE user_id = ? ORDER BY name", (user_id,)
+    ).fetchall()
 
-    sql = """
-        SELECT expenses.*, categories.name AS category_name, categories.color AS category_color
-        FROM expenses
-        JOIN categories ON categories.id = expenses.category_id
-        WHERE expenses.user_id = %s AND to_char(expenses.spent_on, 'YYYY-MM') = %s
-    """
-    params = [user_id, month]
-    if category_filter:
-        sql += " AND expenses.category_id = %s"
-        params.append(category_filter)
-    sql += " ORDER BY expenses.spent_on DESC, expenses.id DESC"
+    # A search searches across ALL months (not just the selected one), since
+    # the point is finding something regardless of when it happened. Each
+    # result still shows its own date so context isn't lost.
+    if search_query:
+        query = """
+            SELECT expenses.*, categories.name AS category_name, categories.color AS category_color
+            FROM expenses
+            JOIN categories ON categories.id = expenses.category_id
+            WHERE expenses.user_id = ? AND expenses.note ILIKE ?
+        """
+        params = [user_id, f"%{search_query}%"]
+        if category_filter:
+            query += " AND expenses.category_id = ?"
+            params.append(category_filter)
+        query += " ORDER BY expenses.spent_on DESC, expenses.id DESC"
+        expenses = db.execute(query, params).fetchall()
+    else:
+        query = """
+            SELECT expenses.*, categories.name AS category_name, categories.color AS category_color
+            FROM expenses
+            JOIN categories ON categories.id = expenses.category_id
+            WHERE expenses.user_id = ? AND to_char(expenses.spent_on, 'YYYY-MM') = ?
+        """
+        params = [user_id, month]
+        if category_filter:
+            query += " AND expenses.category_id = ?"
+            params.append(category_filter)
+        query += " ORDER BY expenses.spent_on DESC, expenses.id DESC"
+        expenses = db.execute(query, params).fetchall()
 
-    expenses = query(sql, params)
-
-    totals_rows = query("""
+    totals_rows = db.execute("""
         SELECT categories.id, categories.name, categories.color,
                COALESCE(SUM(expenses.amount), 0) AS total
         FROM categories
         LEFT JOIN expenses ON expenses.category_id = categories.id
-            AND to_char(expenses.spent_on, 'YYYY-MM') = %s
-        WHERE categories.user_id = %s
-        GROUP BY categories.id, categories.name, categories.color
+            AND to_char(expenses.spent_on, 'YYYY-MM') = ?
+        WHERE categories.user_id = ?
+        GROUP BY categories.id
         ORDER BY total DESC
-    """, (month, user_id))
+    """, (month, user_id)).fetchall()
 
     month_total = sum(row["total"] for row in totals_rows)
     max_total = max((row["total"] for row in totals_rows), default=0)
@@ -253,6 +290,7 @@ def dashboard():
         max_total=max_total,
         selected_category=category_filter,
         selected_month=month,
+        search_query=search_query,
         today=date.today().isoformat(),
     )
 
@@ -260,6 +298,7 @@ def dashboard():
 @app.route("/expenses/add", methods=["POST"])
 @login_required
 def add_expense():
+    db = get_db()
     user_id = session["user_id"]
 
     category_id = request.form.get("category_id", type=int)
@@ -271,18 +310,19 @@ def add_expense():
         flash("Please choose a section and enter a valid amount.", "error")
         return redirect(url_for("dashboard", month=spent_on[:7]))
 
-    owns_category = query(
-        "SELECT id FROM categories WHERE id = %s AND user_id = %s", (category_id, user_id), one=True
-    )
+    owns_category = db.execute(
+        "SELECT id FROM categories WHERE id = ? AND user_id = ?", (category_id, user_id)
+    ).fetchone()
     if not owns_category:
         flash("That section does not exist.", "error")
         return redirect(url_for("dashboard"))
 
-    execute(
+    db.execute(
         "INSERT INTO expenses (user_id, category_id, amount, note, spent_on, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s)",
-        (user_id, category_id, amount, note, spent_on, datetime.utcnow()),
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, category_id, amount, note, spent_on, datetime.utcnow().isoformat()),
     )
+    db.commit()
     flash("Expense added.", "success")
     return redirect(url_for("dashboard", month=spent_on[:7]))
 
@@ -290,12 +330,14 @@ def add_expense():
 @app.route("/expenses/<int:expense_id>/delete", methods=["POST"])
 @login_required
 def delete_expense(expense_id):
+    db = get_db()
     user_id = session["user_id"]
-    expense = query(
-        "SELECT * FROM expenses WHERE id = %s AND user_id = %s", (expense_id, user_id), one=True
-    )
+    expense = db.execute(
+        "SELECT * FROM expenses WHERE id = ? AND user_id = ?", (expense_id, user_id)
+    ).fetchone()
     if expense:
-        execute("DELETE FROM expenses WHERE id = %s", (expense_id,))
+        db.execute("DELETE FROM expenses WHERE id = ?", (expense_id,))
+        db.commit()
         flash("Expense deleted.", "success")
     return redirect(url_for("dashboard", month=request.form.get("month", date.today().strftime("%Y-%m"))))
 
@@ -303,17 +345,18 @@ def delete_expense(expense_id):
 @app.route("/expenses/<int:expense_id>/edit", methods=["GET", "POST"])
 @login_required
 def edit_expense(expense_id):
+    db = get_db()
     user_id = session["user_id"]
-    expense = query(
-        "SELECT * FROM expenses WHERE id = %s AND user_id = %s", (expense_id, user_id), one=True
-    )
+    expense = db.execute(
+        "SELECT * FROM expenses WHERE id = ? AND user_id = ?", (expense_id, user_id)
+    ).fetchone()
     if not expense:
         flash("Expense not found.", "error")
         return redirect(url_for("dashboard"))
 
-    categories = query(
-        "SELECT * FROM categories WHERE user_id = %s ORDER BY name", (user_id,)
-    )
+    categories = db.execute(
+        "SELECT * FROM categories WHERE user_id = ? ORDER BY name", (user_id,)
+    ).fetchall()
 
     if request.method == "POST":
         category_id = request.form.get("category_id", type=int)
@@ -325,10 +368,11 @@ def edit_expense(expense_id):
             flash("Please fill in all fields with a valid amount.", "error")
             return render_template("edit_expense.html", expense=expense, categories=categories)
 
-        execute(
-            "UPDATE expenses SET category_id = %s, amount = %s, note = %s, spent_on = %s WHERE id = %s",
+        db.execute(
+            "UPDATE expenses SET category_id = ?, amount = ?, note = ?, spent_on = ? WHERE id = ?",
             (category_id, amount, note, spent_on, expense_id),
         )
+        db.commit()
         flash("Expense updated.", "success")
         return redirect(url_for("dashboard", month=spent_on[:7]))
 
@@ -342,6 +386,7 @@ def edit_expense(expense_id):
 @app.route("/categories/add", methods=["POST"])
 @login_required
 def add_category():
+    db = get_db()
     user_id = session["user_id"]
     name = request.form.get("name", "").strip()
     color = request.form.get("color", "#22304A")
@@ -350,17 +395,18 @@ def add_category():
         flash("Section name cannot be empty.", "error")
         return redirect(url_for("dashboard"))
 
-    existing = query(
-        "SELECT id FROM categories WHERE user_id = %s AND name = %s", (user_id, name), one=True
-    )
+    existing = db.execute(
+        "SELECT id FROM categories WHERE user_id = ? AND name = ?", (user_id, name)
+    ).fetchone()
     if existing:
         flash("You already have a section with that name.", "error")
         return redirect(url_for("dashboard"))
 
-    execute(
-        "INSERT INTO categories (user_id, name, color, created_at) VALUES (%s, %s, %s, %s)",
-        (user_id, name, color, datetime.utcnow()),
+    db.execute(
+        "INSERT INTO categories (user_id, name, color, created_at) VALUES (?, ?, ?, ?)",
+        (user_id, name, color, datetime.utcnow().isoformat()),
     )
+    db.commit()
     flash(f'Section "{name}" created.', "success")
     return redirect(url_for("dashboard"))
 
@@ -368,18 +414,114 @@ def add_category():
 @app.route("/categories/<int:category_id>/delete", methods=["POST"])
 @login_required
 def delete_category(category_id):
+    db = get_db()
     user_id = session["user_id"]
-    category = query(
-        "SELECT * FROM categories WHERE id = %s AND user_id = %s", (category_id, user_id), one=True
-    )
+    category = db.execute(
+        "SELECT * FROM categories WHERE id = ? AND user_id = ?", (category_id, user_id)
+    ).fetchone()
     if category:
-        execute("DELETE FROM categories WHERE id = %s", (category_id,))
+        db.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+        db.commit()
         flash(f'Section "{category["name"]}" and its expenses were deleted.', "success")
     return redirect(url_for("dashboard"))
 
 
-# Initialise DB on startup regardless of how the app is launched
-init_db()
+# ---------------------------------------------------------------------------
+# CSV export
+# ---------------------------------------------------------------------------
+
+@app.route("/expenses/export")
+@login_required
+def export_expenses():
+    import csv
+    import io
+
+    db = get_db()
+    user_id = session["user_id"]
+
+    category_filter = request.args.get("category", type=int)
+    month = request.args.get("month", date.today().strftime("%Y-%m"))
+    search_query = request.args.get("q", "").strip()
+
+    if search_query:
+        query = """
+            SELECT expenses.spent_on, categories.name AS category_name,
+                   expenses.amount, expenses.note
+            FROM expenses
+            JOIN categories ON categories.id = expenses.category_id
+            WHERE expenses.user_id = ? AND expenses.note ILIKE ?
+        """
+        params = [user_id, f"%{search_query}%"]
+        filename_part = f"search-{search_query}"
+    else:
+        query = """
+            SELECT expenses.spent_on, categories.name AS category_name,
+                   expenses.amount, expenses.note
+            FROM expenses
+            JOIN categories ON categories.id = expenses.category_id
+            WHERE expenses.user_id = ? AND to_char(expenses.spent_on, 'YYYY-MM') = ?
+        """
+        params = [user_id, month]
+        filename_part = month
+
+    if category_filter:
+        query += " AND expenses.category_id = ?"
+        params.append(category_filter)
+    query += " ORDER BY expenses.spent_on DESC, expenses.id DESC"
+
+    rows = db.execute(query, params).fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Section", "Amount", "Note"])
+    for row in rows:
+        writer.writerow([row["spent_on"], row["category_name"], row["amount"], row["note"] or ""])
+
+    csv_data = output.getvalue()
+    safe_name = "".join(c for c in filename_part if c.isalnum() or c in ("-", "_")) or "expenses"
+
+    from flask import Response
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=spendly-{safe_name}.csv"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# About
+# ---------------------------------------------------------------------------
+
+@app.route("/about")
+def about():
+    return render_template("about.html")
+
+
+# ---------------------------------------------------------------------------
+# Feedback
+# ---------------------------------------------------------------------------
+
+@app.route("/feedback", methods=["GET", "POST"])
+def feedback():
+    if request.method == "POST":
+        message = request.form.get("message", "").strip()
+        if not message:
+            flash("Please write something before submitting.", "error")
+            return render_template("feedback.html")
+
+        db = get_db()
+        user_id = session.get("user_id")
+        username = session.get("username")
+        db.execute(
+            "INSERT INTO feedback (user_id, username, message, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, username, message, datetime.utcnow().isoformat()),
+        )
+        db.commit()
+        flash("Thanks for the feedback! It's been sent through.", "success")
+        return redirect(url_for("feedback"))
+
+    return render_template("feedback.html")
+
 
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="127.0.0.1", port=5000)
