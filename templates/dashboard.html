@@ -11,6 +11,8 @@
         <div class="stamp-label">{{ selected_month }}</div>
         <div class="stamp-amount mono">₹{{ "%.2f"|format(month_total) }}</div>
       </div>
+      <a class="icon-btn" href="{{ url_for('about') }}" title="About Spendly">ℹ️</a>
+      <button class="icon-btn" type="button" onclick="toggleTheme()" title="Toggle dark mode">🌙</button>
       <span class="user-pill">{{ current_username }}</span>
       <a class="btn btn-outline" href="{{ url_for('logout') }}">Log out</a>
     </div>
@@ -109,12 +111,38 @@
       </div>
 
       <div class="card">
-        <h3>Expenses</h3>
-        <form class="month-picker" method="get" action="{{ url_for('dashboard') }}">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+          <h3 style="margin:0;">{% if search_query %}Search results{% else %}Expenses{% endif %}</h3>
+          <a class="btn btn-outline" style="font-size:12px; padding:6px 12px;"
+             href="{{ url_for('export_expenses', month=selected_month, category=selected_category, q=search_query) }}">
+            ⬇ Export CSV
+          </a>
+        </div>
+
+        <form class="month-picker" method="get" action="{{ url_for('dashboard') }}" style="flex-wrap: wrap;">
           {% if selected_category %}<input type="hidden" name="category" value="{{ selected_category }}">{% endif %}
+          <input type="text" name="q" value="{{ search_query }}" placeholder="Search notes…"
+                 style="padding:7px 10px; border:1px solid var(--paper-line); border-radius:3px; flex:1; min-width:140px;">
+          {% if not search_query %}
           <label for="month">Month</label>
-          <input type="month" id="month" name="month" value="{{ selected_month }}" onchange="this.form.submit()">
+          <input type="month" id="month" name="month" value="{{ selected_month }}">
+          {% else %}
+          <input type="hidden" name="month" value="{{ selected_month }}">
+          {% endif %}
+          <button class="btn btn-outline" type="submit" style="padding:7px 14px;">
+            {% if search_query %}Search{% else %}Go{% endif %}
+          </button>
+          {% if search_query %}
+          <a class="btn btn-outline" style="padding:7px 14px;"
+             href="{{ url_for('dashboard', month=selected_month, category=selected_category) }}">Clear</a>
+          {% endif %}
         </form>
+
+        {% if search_query %}
+        <p style="font-size:13px; color: var(--charcoal-soft); margin: 0 0 12px;">
+          Showing matches for "{{ search_query }}" across all months.
+        </p>
+        {% endif %}
 
         {% if expenses %}
         <div class="ledger">
@@ -138,7 +166,9 @@
           {% endfor %}
         </div>
         {% else %}
-        <div class="empty-state">No expenses logged for this month yet. Add your first one above.</div>
+        <div class="empty-state">
+          {% if search_query %}No expenses match "{{ search_query }}".{% else %}No expenses logged for this month yet. Add your first one above.{% endif %}
+        </div>
         {% endif %}
       </div>
 
