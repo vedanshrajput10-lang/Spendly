@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Feedback · Spendly{% endblock %}
+{% block body %}
+<div class="wrap">
+  <div class="topbar">
+    <p class="brand"><a href="{{ url_for('dashboard') if current_username else url_for('login') }}">Spendly</a></p>
+    <div class="topbar-right">
+      <a class="btn btn-outline" href="{{ url_for('dashboard') if current_username else url_for('login') }}">← Back</a>
+    </div>
+  </div>
+
+  <div class="card" style="max-width: 480px; margin: 0 auto;">
+    <h3>Send feedback</h3>
+    <p style="line-height: 1.6; margin-bottom: 16px; color: var(--charcoal-soft);">
+      Bug, idea, or just something confusing? Let us know.
+    </p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="post">
+      <div class="field">
+        <label for="message">Your message</label>
+        <textarea id="message" name="message" rows="6" required
+          style="width:100%; padding:10px 12px; border:1px solid var(--paper-line); border-radius:3px; font-family:inherit; font-size:15px; resize:vertical;"
+          placeholder="What's on your mind?"></textarea>
+      </div>
+      <button class="btn btn-primary" type="submit">Send feedback</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
