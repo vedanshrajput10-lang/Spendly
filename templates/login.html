@@ -12,8 +12,7 @@
       {% endfor %}
     {% endwith %}
 
-    <form action="{{ url_for('login') }}" method="POST">
-
+    <form method="post">
       <div class="field">
         <label for="username">Username</label>
         <input type="text" id="username" name="username" autocomplete="username" required autofocus>
@@ -26,6 +25,7 @@
     </form>
 
     <p class="auth-foot">No account yet? <a href="{{ url_for('register') }}">Create one</a></p>
+    <p class="auth-foot"><a href="{{ url_for('about') }}">About Spendly</a></p>
   </div>
 </div>
 {% endblock %}
