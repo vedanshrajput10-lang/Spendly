@@ -11,6 +11,30 @@
   --shadow: 0 1px 0 rgba(34, 48, 74, 0.06);
 }
 
+html.dark {
+  --paper: #1b2130;
+  --paper-line: #323a4d;
+  --ink: #e8ecf5;
+  --charcoal: #e4e1d8;
+  --charcoal-soft: #9b9a95;
+  --sage: #9db98f;
+  --rust: #e08267;
+  --gold: #e0ac52;
+  --card: #242b3d;
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+html.dark .stamp {
+  color: var(--rust);
+  border-color: var(--rust);
+}
+
+html.dark .empty-state,
+html.dark .brand-sub,
+html.dark .auth-foot {
+  color: var(--charcoal-soft);
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -145,6 +169,22 @@ a { color: inherit; }
   font-size: 12px;
 }
 .btn-danger:hover { text-decoration: underline; }
+
+.icon-btn {
+  background: none;
+  border: 1px solid var(--paper-line);
+  border-radius: 3px;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--charcoal);
+}
+.icon-btn:hover { border-color: var(--ink); }
 
 .auth-foot {
   margin-top: 18px;
